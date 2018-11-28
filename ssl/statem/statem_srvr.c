@@ -2240,6 +2240,20 @@ WORK_STATE tls_post_process_client_hello(SSL *s, WORK_STATE wst)
                     }
                     s->rwstate = SSL_NOTHING;
                 }
+
+                /*
+                 * Call alpn_select callback if needed.  Has to be done after
+                 * SNI but before other parameters are derived as the ALPN
+                 * callback may modify other parameters.
+                 * In TLSv1.3 we already did this because cipher negotiation
+                 * happens earlier, and we must handle ALPN before we decide
+                 * whether to accept early_data.
+                 */
+                if (!tls_handle_alpn(s)) {
+                    /* SSLfatal() already called */
+                    goto err;
+                }
+
                 if (!tls1_set_server_sigalgs(s)) {
                     /* SSLfatal already called */
                     goto err;
@@ -2277,6 +2291,10 @@ WORK_STATE tls_post_process_client_hello(SSL *s, WORK_STATE wst)
         } else {
             /* Session-id reuse */
             s->s3->tmp.new_cipher = s->session->cipher;
+            if (!SSL_IS_TLS13(s) && !tls_handle_alpn(s)) {
+                /* SSLfatal() already called */
+                goto err;
+            }
         }
 
         /*-
@@ -2296,16 +2314,6 @@ WORK_STATE tls_post_process_client_hello(SSL *s, WORK_STATE wst)
          * certificate callbacks etc above.
          */
         if (!tls_handle_status_request(s)) {
-            /* SSLfatal() already called */
-            goto err;
-        }
-        /*
-         * Call alpn_select callback if needed.  Has to be done after SNI and
-         * cipher negotiation (HTTP/2 restricts permitted ciphers). In TLSv1.3
-         * we already did this because cipher negotiation happens earlier, and
-         * we must handle ALPN before we decide whether to accept early_data.
-         */
-        if (!SSL_IS_TLS13(s) && !tls_handle_alpn(s)) {
             /* SSLfatal() already called */
             goto err;
         }
